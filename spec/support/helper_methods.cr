@@ -1,43 +1,58 @@
-# frozen_string_literal: true
-
-require 'multipart_parser/reader'
+require "http/formdata"
+require "mime/media_type"
 
 module Faraday
   module Multipart
+    struct ParsedPart
+      getter part : HTTP::FormData::Part
+      getter body : String
+
+      def initialize(@part : HTTP::FormData::Part, @body : String)
+      end
+
+      delegate name, filename, headers, to: @part
+
+      def mime : String?
+        headers["Content-Type"]?
+      end
+    end
+
+    class ParsedMultipart
+      getter errors : Array(String)
+      getter parts : Array(ParsedPart)
+
+      def initialize
+        @errors = [] of String
+        @parts = [] of ParsedPart
+      end
+
+      def part(name : String) : ParsedPart?
+        @parts.find { |entry| entry.name == name }
+      end
+    end
+
     module HelperMethods
+      extend self
+
       def multipart_file
-        Faraday::Multipart::FilePart.new(__FILE__, 'text/x-ruby')
+        Faraday::Multipart::FilePart.new(__FILE__, "text/x-ruby")
       end
 
-      # parse boundary out of a Content-Type header like:
-      #   Content-Type: multipart/form-data; boundary=gc0p4Jq0M2Yt08jU534c0p
-      def parse_multipart_boundary(ctype)
-        MultipartParser::Reader.extract_boundary_value(ctype)
+      def parse_multipart_boundary(content_type : String) : String
+        MIME::MediaType.parse(content_type)["boundary"]
       end
 
-      # parse a multipart MIME message, returning a hash of any multipart errors
-      def parse_multipart(boundary, body)
-        reader = MultipartParser::Reader.new(boundary)
-        result = { errors: [], parts: [] }
+      def parse_multipart(boundary : String, body : String) : ParsedMultipart
+        result = ParsedMultipart.new
+        begin
+          parser = HTTP::FormData::Parser.new(IO::Memory.new(body), boundary)
 
-        def result.part(name)
-          hash = self[:parts].detect { |h| h[:part].name == name }
-          [hash[:part], hash[:body].join]
-        end
-
-        reader.on_part do |part|
-          result[:parts] << thispart = {
-            part: part,
-            body: []
-          }
-          part.on_data do |chunk|
-            thispart[:body] << chunk
+          parser.next do |part|
+            result.parts << ParsedPart.new(part, part.body.gets_to_end.sub(/\r\n\z/, ""))
           end
+        rescue ex : HTTP::FormData::Error | MIME::Multipart::Error
+          result.errors << ex.message.to_s
         end
-        reader.on_error do |msg|
-          result[:errors] << msg
-        end
-        reader.write(body)
         result
       end
     end

@@ -1,7 +1,7 @@
-# frozen_string_literal: true
+require "../../spec_helper"
 
-RSpec.describe 'Faraday::Multipart::VERSION' do
-  subject { Object.const_get(self.class.description) }
-
-  it { is_expected.to match(/^\d+\.\d+\.\d+(\.\w+(\.\d+)?)?$/) }
+Spectator.describe Faraday::Multipart::VERSION do
+  it "looks like a release version" do
+    expect(Faraday::Multipart::VERSION).to match(/^\d+\.\d+\.\d+(\.\w+(\.\d+)?)?$/)
+  end
 end

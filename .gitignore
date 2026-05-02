@@ -1,16 +1,14 @@
 .idea/
-.bundle/
-.yardoc
-_yardoc/
 coverage/
 doc/
 pkg/
 spec/reports/
 tmp/
 
-*.gem
-Gemfile.lock
-
-.rvmrc
-
-.rspec_status
+# Crystal
+/lib/
+/.shards/
+shard.lock
+*.dwarf
+/multipart
+/.spectator-failures

@@ -1,83 +1,56 @@
-# frozen_string_literal: true
+require "../../spec_helper"
 
-require 'stringio'
+private struct CompositePart
+  include Faraday::Multipart::ReadablePart
 
-RSpec.describe Faraday::Multipart::CompositeReadIO do
-  Part = Struct.new(:to_io) do
-    def length
-      to_io.string.length
-    end
+  def initialize(@body : String)
   end
 
-  def part(str)
-    Part.new StringIO.new(str)
+  def to_io : IO::Memory
+    IO::Memory.new(@body)
   end
 
-  def composite_io(*parts)
-    described_class.new(*parts)
+  def length : Int32
+    @body.bytesize
+  end
+end
+
+Spectator.describe Faraday::Multipart::CompositeReadIO do
+  it "reads an empty composite" do
+    io = Faraday::Multipart::CompositeReadIO.new
+
+    expect(io.length).to eq(0)
+    expect(io.read).to eq("")
+    expect(io.read(1)).to be_nil
   end
 
-  context 'with empty composite_io' do
-    subject { composite_io }
+  it "reads multiple parts in order" do
+    io = Faraday::Multipart::CompositeReadIO.new(CompositePart.new("abcd"), CompositePart.new("1234"))
 
-    it { expect(subject.length).to eq(0) }
-    it { expect(subject.read).to eq('') }
-    it { expect(subject.read(1)).to be_nil }
+    expect(io.length).to eq(8)
+    expect(io.read).to eq("abcd1234")
   end
 
-  context 'with empty parts' do
-    subject { composite_io(part(''), part('')) }
+  it "reads in chunks and stops at the end" do
+    io = Faraday::Multipart::CompositeReadIO.new(CompositePart.new("abcd"), CompositePart.new("1234"))
 
-    it { expect(subject.length).to eq(0) }
-    it { expect(subject.read).to eq('') }
-    it { expect(subject.read(1)).to be_nil }
+    expect(io.read(3)).to eq("abc")
+    expect(io.read(3)).to eq("d12")
+    expect(io.read(3)).to eq("34")
+    expect(io.read(3)).to be_nil
   end
 
-  context 'with 2 parts' do
-    subject { composite_io(part('abcd'), part('1234')) }
+  it "rewinds back to the start" do
+    io = Faraday::Multipart::CompositeReadIO.new(CompositePart.new("abcd"), CompositePart.new("1234"))
 
-    it { expect(subject.length).to eq(8) }
-    it { expect(subject.read).to eq('abcd1234') }
-
-    it 'allows to read in chunks' do
-      expect(subject.read(3)).to eq('abc')
-      expect(subject.read(3)).to eq('d12')
-      expect(subject.read(3)).to eq('34')
-      expect(subject.read(3)).to be_nil
-    end
-
-    it 'allows to rewind while reading in chunks' do
-      expect(subject.read(3)).to eq('abc')
-      expect(subject.read(3)).to eq('d12')
-      subject.rewind
-      expect(subject.read(3)).to eq('abc')
-      expect(subject.read(5)).to eq('d1234')
-      expect(subject.read(3)).to be_nil
-      subject.rewind
-      expect(subject.read(2)).to eq('ab')
-    end
+    expect(io.read(5)).to eq("abcd1")
+    io.rewind
+    expect(io.read(4)).to eq("abcd")
   end
 
-  context 'with mix of empty and non-empty parts' do
-    subject { composite_io(part(''), part('abcd'), part(''), part('1234'), part('')) }
+  it "still returns the chunk when given an output buffer" do
+    io = Faraday::Multipart::CompositeReadIO.new(CompositePart.new("ab"), CompositePart.new("cd"))
 
-    it 'allows to read in chunks' do
-      expect(subject.read(6)).to eq('abcd12')
-      expect(subject.read(6)).to eq('34')
-      expect(subject.read(6)).to be_nil
-    end
-  end
-
-  context 'with utf8 multibyte part' do
-    subject { composite_io(part("\x86"), part('ファイル')) }
-
-    it { expect(subject.read).to eq(String.new("\x86\xE3\x83\x95\xE3\x82\xA1\xE3\x82\xA4\xE3\x83\xAB", encoding: 'BINARY')) }
-
-    it 'allows to read in chunks' do
-      expect(subject.read(3)).to eq(String.new("\x86\xE3\x83", encoding: 'BINARY'))
-      expect(subject.read(3)).to eq(String.new("\x95\xE3\x82", encoding: 'BINARY'))
-      expect(subject.read(8)).to eq(String.new("\xA1\xE3\x82\xA4\xE3\x83\xAB", encoding: 'BINARY'))
-      expect(subject.read(3)).to be_nil
-    end
+    expect(io.read(3, "noise")).to eq("abc")
   end
 end

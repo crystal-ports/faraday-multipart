@@ -1,132 +1,92 @@
-# frozen_string_literal: true
-
-require 'securerandom'
+require "random/secure"
 
 module Faraday
   module Multipart
-    # Middleware for supporting multi-part requests.
     class Middleware < Faraday::Middleware
-      CONTENT_TYPE = 'Content-Type'
-      DEFAULT_BOUNDARY_PREFIX = '-----------RubyMultipartPost'
+      CONTENT_TYPE            = "Content-Type"
+      DEFAULT_BOUNDARY_PREFIX = "-----------RubyMultipartPost"
 
-      def initialize(app = nil, options = {})
+      def initialize(app : Faraday::Handler, @options = Options.new)
         super(app)
-        @options = options
       end
 
-      # Checks for files in the payload, otherwise leaves everything untouched.
-      #
-      # @param env [Faraday::Env]
-      def call(env)
-        match_content_type(env) do |params|
-          env.request.boundary ||= unique_boundary
-          env.request_headers[CONTENT_TYPE] +=
-            "; boundary=#{env.request.boundary}"
-          env.body = create_multipart(env, params)
-        end
-        @app.call env
-      end
+      def on_request(env : Faraday::Env)
+        payload = env.multipart_body
+        return unless payload
+        return if payload_empty?(payload)
 
-      private
-
-      # @param env [Faraday::Env]
-      # @yield [request_body] Body of the request
-      def match_content_type(env)
-        return unless process_request?(env)
-
-        env.request_headers[CONTENT_TYPE] ||= mime_type
-        return if env.body.respond_to?(:to_str) || env.body.respond_to?(:read)
-
-        yield(env.body)
-      end
-
-      # @param env [Faraday::Env]
-      def process_request?(env)
         type = request_type(env)
-        env.body.respond_to?(:each_key) && !env.body.empty? && (
-          (type.empty? && has_multipart?(env.body)) ||
-            (type == mime_type)
-        )
+        return unless (type.empty? && Faraday::Multipart.multipart?(payload)) || type == mime_type
+
+        boundary = env.request.boundary || unique_boundary
+        env.request.boundary = boundary
+        env.request_headers[CONTENT_TYPE] = "#{mime_type}; boundary=#{boundary}"
+
+        body = create_multipart(boundary, payload)
+        env.request_headers[Faraday::Env::CONTENT_LENGTH] = body.length.to_s
+        env.body = body.read || ""
       end
 
-      # @param env [Faraday::Env]
-      #
-      # @return [String]
-      def request_type(env)
-        type = env.request_headers[CONTENT_TYPE].to_s
-        type = type.split(';', 2).first if type.index(';')
-        type
+      private def request_type(env : Faraday::Env) : String
+        value = env.request_headers[CONTENT_TYPE]? || ""
+        value.split(";", 2).first || value
       end
 
-      # Returns true if obj is an enumerable with values that are multipart.
-      #
-      # @param obj [Object]
-      # @return [Boolean]
-      def has_multipart?(obj)
-        if obj.respond_to?(:each)
-          (obj.respond_to?(:values) ? obj.values : obj).each do |val|
-            return true if val.respond_to?(:content_type) || has_multipart?(val)
-          end
-        end
+      private def payload_empty?(payload : Array) : Bool
+        payload.empty?
+      end
+
+      private def payload_empty?(payload : Hash) : Bool
+        payload.empty?
+      end
+
+      private def payload_empty?(payload : Value) : Bool
         false
       end
 
-      # @param env [Faraday::Env]
-      # @param params [Hash]
-      def create_multipart(env, params)
-        boundary = env.request.boundary
-        parts = process_params(params) do |key, value|
-          part(boundary, key, value)
-        end
-        parts << Faraday::Multipart::Parts::EpiloguePart.new(boundary)
-
-        body = Faraday::Multipart::CompositeReadIO.new(parts)
-        env.request_headers[Faraday::Env::ContentLength] = body.length.to_s
-        body
+      private def create_multipart(boundary : String, payload : Value) : CompositeReadIO
+        parts = [] of Parts::Part | Parts::EpiloguePart
+        append_value(boundary, "", payload, parts)
+        parts << Parts::EpiloguePart.new(boundary)
+        CompositeReadIO.new(parts)
       end
 
-      def part(boundary, key, value)
-        if value.respond_to?(:to_part)
-          value.to_part(boundary, key)
-        else
-          Faraday::Multipart::Parts::Part.new(boundary, key, value)
+      private def append_value(boundary : String, key : String, value : Hash, parts : Array(Parts::Part | Parts::EpiloguePart))
+        value.each do |child_key, child_value|
+          next_key = key.empty? ? child_key.to_s : nested_key(key, child_key)
+          append_value(boundary, next_key, child_value.as(Value), parts)
         end
       end
 
-      # @return [String]
-      def unique_boundary
-        "#{DEFAULT_BOUNDARY_PREFIX}-#{SecureRandom.hex}"
-      end
-
-      # @param params [Hash]
-      # @param prefix [String]
-      # @param pieces [Array]
-      def process_params(params, prefix = nil, pieces = nil, &block)
-        params.inject(pieces || []) do |all, (key, value)|
-          if prefix
-            key = @options[:flat_encode] ? prefix.to_s : "#{prefix}[#{key}]"
-          end
-
-          case value
-          when Array
-            values = value.inject([]) { |a, v| a << [nil, v] }
-            process_params(values, key, all, &block)
-          when Hash
-            process_params(value, key, all, &block)
-          else
-            all << block.call(key, value) # rubocop:disable Performance/RedundantBlockCall
-          end
+      private def append_value(boundary : String, key : String, value : Array, parts : Array(Parts::Part | Parts::EpiloguePart))
+        array_key = @options.flat_encode ? key : "#{key}[]"
+        value.each do |child|
+          append_value(boundary, array_key, child.as(Value), parts)
         end
       end
 
-      # Determines and provides the multipart mime type for the request.
-      #
-      # @return [String] the multipart mime type
-      def mime_type
-        @mime_type ||= if @options[:content_type].to_s.match?(%r{\Amultipart/.+})
-                         @options[:content_type].to_s
+      private def append_value(boundary : String, key : String, value : FilePart | ParamPart, parts : Array(Parts::Part | Parts::EpiloguePart))
+        parts << value.to_part(boundary, key)
+      end
+
+      private def append_value(boundary : String, key : String, value : Value, parts : Array(Parts::Part | Parts::EpiloguePart))
+        parts << Parts::Part.new(boundary, key, value.to_s)
+      end
+
+      private def nested_key(prefix : String, key) : String
+        return prefix if @options.flat_encode
+        %(#{prefix}[#{key}])
+      end
+
+      private def unique_boundary : String
+        "#{DEFAULT_BOUNDARY_PREFIX}-#{Random::Secure.hex(12)}"
+      end
+
+      private def mime_type : String
+        @mime_type ||= if (content_type = @options.content_type) && content_type.starts_with?("multipart/")
+                         content_type
                        else
-                         'multipart/form-data'
+                         "multipart/form-data"
                        end
       end
     end

@@ -1,35 +1,21 @@
-# frozen_string_literal: true
+name: faraday-multipart
+version: 1.2.0
 
-require_relative 'lib/faraday/multipart/version'
+description: |
+  Perform multipart-post requests using Faraday.
 
-Gem::Specification.new do |spec|
-  spec.name = 'faraday-multipart'
-  spec.version = Faraday::Multipart::VERSION
-  spec.authors = ['Mattia Giuffrida']
-  spec.email = ['giuffrida.mattia@gmail.com']
+authors:
+  - Mattia Giuffrida
 
-  spec.summary = 'Perform multipart-post requests using Faraday.'
-  spec.description = <<~DESC
-    Perform multipart-post requests using Faraday.
-  DESC
-  spec.license = 'MIT'
+license: MIT
+homepage: https://github.com/lostisland/faraday-multipart
 
-  github_uri = "https://github.com/lostisland/#{spec.name}"
+crystal: ">= 1.18.0"
 
-  spec.homepage = github_uri
+dependencies:
+  faraday:
+    github: crystal-ports/faraday
 
-  spec.metadata = {
-    'bug_tracker_uri' => "#{github_uri}/issues",
-    'changelog_uri' => "#{github_uri}/blob/v#{spec.version}/CHANGELOG.md",
-    'documentation_uri' => "http://www.rubydoc.info/gems/#{spec.name}/#{spec.version}",
-    'homepage_uri' => spec.homepage,
-    'source_code_uri' => github_uri,
-    'wiki_uri' => "#{github_uri}/wiki"
-  }
-
-  spec.files = Dir['lib/**/*', 'README.md', 'LICENSE.md', 'CHANGELOG.md']
-
-  spec.required_ruby_version = '>= 2.4'
-
-  spec.add_dependency 'multipart-post', '~> 2.0'
-end
+development_dependencies:
+  spectator:
+    github: icy-arctic-fox/spectator
